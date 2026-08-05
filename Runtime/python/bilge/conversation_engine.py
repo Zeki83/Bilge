@@ -13,12 +13,14 @@ Volgorde:
 6. Lokaal Qwen-model aanroepen.
 7. Modelantwoord opschonen.
 8. Gebruikersbericht en schoon antwoord tijdelijk bewaren.
+9. Betekenisvolle gespreksrondes selecteren voor Episodic Memory.
 
 Deze versie:
 - gebruikt uitsluitend de lokale Ollama-server;
 - gebruikt Short Memory binnen de actieve sessie;
 - verwerkt expliciete geheugenopdrachten;
-- slaat gewone gesprekken niet permanent op;
+- bewaart betekenisvolle gesprekken in Episodic Memory;
+- slaat triviale gesprekken niet permanent op;
 - schoont zichtbare modelmetadata en stijve formuleringen op;
 - verwijdert nooit automatisch herinneringen;
 - koppelt geen externe apps;
@@ -37,6 +39,11 @@ from bilge.answer_cleaner import (
     CleanAnswerResult,
 )
 from bilge.boot_loader import BootLoader
+from bilge.episode_pipeline import (
+    EpisodePipeline,
+    EpisodePipelineError,
+    EpisodePipelineResult,
+)
 from bilge.memory_manager import MemoryDecision
 from bilge.memory_pipeline import (
     MemoryPipeline,
@@ -91,6 +98,7 @@ class ConversationResult:
     context: ContextState
     memory_decision: MemoryDecision
     memory_pipeline_result: MemoryPipelineResult
+    episode_pipeline_result: EpisodePipelineResult | None
     reasoning_plan: ReasoningPlan
     response_draft: ResponseDraft
     prompt_package: PromptPackage
@@ -107,27 +115,57 @@ class ConversationResult:
 
     @property
     def language(self) -> str:
+        """Geeft de gebruikte antwoordtaal terug."""
         return self.context.language
 
     @property
     def model(self) -> str:
+        """Geeft het gebruikte model terug."""
         return self.model_response.model
 
     @property
     def memory_types(self) -> list[str]:
+        """Geeft de gekozen geheugentypen terug."""
         return list(self.memory_decision.memory_types)
 
     @property
     def permanent_memory_stored(self) -> bool:
+        """Geeft terug of expliciete Long Memory is opgeslagen."""
         return self.memory_pipeline_result.stored
 
     @property
     def memory_action(self) -> str:
+        """Geeft de expliciete geheugenactie terug."""
         return self.memory_pipeline_result.plan.action
 
     @property
     def answer_was_cleaned(self) -> bool:
+        """Geeft terug of het modelantwoord is aangepast."""
         return self.clean_answer_result.changed
+
+    @property
+    def episode_stored(self) -> bool:
+        """Geeft terug of deze gespreksronde episodisch is opgeslagen."""
+        return bool(
+            self.episode_pipeline_result
+            and self.episode_pipeline_result.stored
+        )
+
+    @property
+    def episode_decision(self) -> str:
+        """Geeft de episodische selectiebeslissing terug."""
+        if self.episode_pipeline_result is None:
+            return "unavailable"
+
+        return self.episode_pipeline_result.decision
+
+    @property
+    def episode_duplicate(self) -> bool:
+        """Geeft terug of de episode al bestond."""
+        return bool(
+            self.episode_pipeline_result
+            and self.episode_pipeline_result.duplicate
+        )
 
 
 class ConversationEngine:
@@ -142,6 +180,7 @@ class ConversationEngine:
         model_client: OllamaModelClient | None = None,
         short_memory: ShortMemory | None = None,
         memory_pipeline: MemoryPipeline | None = None,
+        episode_pipeline: EpisodePipeline | None = None,
         answer_cleaner: AnswerCleaner | None = None,
     ) -> None:
         self.boot_loader = boot_loader or BootLoader()
@@ -155,6 +194,10 @@ class ConversationEngine:
 
         self.memory_pipeline = (
             memory_pipeline or MemoryPipeline()
+        )
+
+        self.episode_pipeline = (
+            episode_pipeline or EpisodePipeline()
         )
 
         self.answer_cleaner = (
@@ -280,6 +323,49 @@ class ConversationEngine:
             and not result.plan.allowed
         ):
             print("[MEMORY] Informatie niet opgeslagen.")
+
+        return result
+
+    def process_episode(
+        self,
+        user_message: str,
+        assistant_message: str,
+        language: str,
+    ) -> EpisodePipelineResult | None:
+        """
+        Selecteert en bewaart een betekenisvolle gespreksronde.
+
+        Een fout binnen Episodic Memory blokkeert het gewone gesprek niet.
+        Bilge kan dus blijven antwoorden wanneer episodische opslag faalt.
+        """
+        try:
+            result = self.episode_pipeline.process(
+                user_message=user_message,
+                assistant_message=assistant_message,
+                language=language,
+                source="conversation_engine",
+            )
+        except EpisodePipelineError as exc:
+            print(
+                "[EPISODE] Episodische verwerking overgeslagen: "
+                f"{exc}"
+            )
+            return None
+
+        if result.stored and result.duplicate:
+            print(
+                "[EPISODE] Bestaande episode herkend; "
+                "niet dubbel opgeslagen."
+            )
+        elif result.stored:
+            print("[EPISODE] Betekenisvolle episode opgeslagen.")
+        elif result.decision == "reject_sensitive":
+            print(
+                "[EPISODE] Gevoelige gespreksinhoud "
+                "niet opgeslagen."
+            )
+        else:
+            print("[EPISODE] Gespreksronde niet blijvend bewaard.")
 
         return result
 
@@ -440,6 +526,12 @@ class ConversationEngine:
             final_answer,
         )
 
+        episode_result = self.process_episode(
+            user_message=pipeline.context.user_message,
+            assistant_message=final_answer,
+            language=pipeline.context.language,
+        )
+
         completed_at = datetime.now(UTC)
         duration_seconds = perf_counter() - timer_start
 
@@ -450,6 +542,7 @@ class ConversationEngine:
             context=pipeline.context,
             memory_decision=pipeline.memory_decision,
             memory_pipeline_result=memory_result,
+            episode_pipeline_result=episode_result,
             reasoning_plan=pipeline.reasoning_plan,
             response_draft=pipeline.response_draft,
             prompt_package=prompt_package,
@@ -479,6 +572,11 @@ class ConversationEngine:
             "short_memory_messages": (
                 self.short_memory.message_count()
             ),
+            "episodic_memory_episodes": (
+                self.episode_pipeline
+                .episodic_memory
+                .episode_count()
+            ),
             "last_result_completed": bool(
                 self.last_result
                 and self.last_result.completed
@@ -491,6 +589,19 @@ class ConversationEngine:
             "last_permanent_memory_stored": bool(
                 self.last_result
                 and self.last_result.permanent_memory_stored
+            ),
+            "last_episode_decision": (
+                self.last_result.episode_decision
+                if self.last_result
+                else "none"
+            ),
+            "last_episode_stored": bool(
+                self.last_result
+                and self.last_result.episode_stored
+            ),
+            "last_episode_duplicate": bool(
+                self.last_result
+                and self.last_result.episode_duplicate
             ),
             "last_answer_cleaned": bool(
                 self.last_result
@@ -519,71 +630,127 @@ def print_result(result: ConversationResult) -> None:
 
     print()
     print("-" * 64)
-    print(f"Taal              : {result.language}")
-    print(f"Model             : {result.model}")
-    print(f"Geheugenactie     : {result.memory_action}")
+    print(f"Taal                 : {result.language}")
+    print(f"Model                : {result.model}")
+    print(f"Geheugenactie        : {result.memory_action}")
     print(
-        f"Blijvend bewaard  : "
+        f"Long Memory bewaard  : "
         f"{result.permanent_memory_stored}"
     )
     print(
-        f"Antwoord opgeschoond: "
+        f"Episodebeslissing    : "
+        f"{result.episode_decision}"
+    )
+    print(
+        f"Episode bewaard      : "
+        f"{result.episode_stored}"
+    )
+    print(
+        f"Episode dubbel       : "
+        f"{result.episode_duplicate}"
+    )
+    print(
+        f"Antwoord opgeschoond : "
         f"{result.answer_was_cleaned}"
     )
     print(
-        f"Prompttokens      : "
+        f"Prompttokens         : "
         f"{result.model_response.prompt_tokens}"
     )
     print(
-        f"Antwoordtokens    : "
+        f"Antwoordtokens       : "
         f"{result.model_response.response_tokens}"
     )
     print(
-        f"Duur              : "
+        f"Duur                 : "
         f"{result.duration_seconds} seconden"
     )
-    print(f"Voltooid          : {result.completed}")
+    print(f"Voltooid             : {result.completed}")
 
 
 def self_test() -> int:
     """Voert één echte end-to-end test uit."""
+    from pathlib import Path
+    from tempfile import TemporaryDirectory
+
+    from bilge.episode_selector import EpisodeSelector
+    from bilge.episodic_memory import EpisodicMemory
+
     print("===== Conversation Engine-test =====")
 
-    engine = ConversationEngine(
-        model_client=OllamaModelClient(
-            timeout_seconds=300,
-            temperature=0.3,
-            num_predict=120,
-        ),
-    )
-
-    try:
-        result = engine.process(
-            "Zeg in maximaal één korte zin dat de opgeschoonde "
-            "Bilge-gespreksketen werkt."
+    with TemporaryDirectory() as temporary_directory:
+        episode_storage = (
+            Path(temporary_directory)
+            / "episodic_memory_test.json"
         )
-    except ConversationEngineError as exc:
-        print()
-        print(f"FOUT: {exc}")
-        return 1
 
-    print_result(result)
+        test_episode_pipeline = EpisodePipeline(
+            selector=EpisodeSelector(),
+            episodic_memory=EpisodicMemory(
+                episode_storage
+            ),
+        )
 
-    if not result.completed:
-        print("FOUT: gesprek niet voltooid.")
-        return 1
+        engine = ConversationEngine(
+            model_client=OllamaModelClient(
+                timeout_seconds=300,
+                temperature=0.3,
+                num_predict=120,
+            ),
+            episode_pipeline=test_episode_pipeline,
+        )
 
-    if not result.answer.strip():
-        print("FOUT: Bilge gaf geen antwoord.")
-        return 1
+        try:
+            result = engine.process(
+                "Zeg in maximaal één korte zin dat de opgeschoonde "
+                "Bilge-gespreksketen werkt."
+            )
+        except ConversationEngineError as exc:
+            print()
+            print(f"FOUT: {exc}")
+            return 1
 
-    if result.answer.lower().startswith(("nl.", "tr.")):
-        print("FOUT: zichtbare taalmetadata is niet verwijderd.")
-        return 1
+        print_result(result)
 
-    if engine.short_memory.message_count() != 2:
-        print("FOUT: Short Memory bevat niet twee berichten.")
-        return 1
+        if not result.completed:
+            print("FOUT: gesprek niet voltooid.")
+            return 1
+
+        if not result.answer.strip():
+            print("FOUT: Bilge gaf geen antwoord.")
+            return 1
+
+        if result.answer.lower().startswith(("nl.", "tr.")):
+            print(
+                "FOUT: zichtbare taalmetadata is niet verwijderd."
+            )
+            return 1
+
+        if engine.short_memory.message_count() != 2:
+            print(
+                "FOUT: Short Memory bevat niet twee berichten."
+            )
+            return 1
+
+        if result.episode_pipeline_result is None:
+            print(
+                "FOUT: Episode Pipeline leverde geen resultaat."
+            )
+            return 1
+
+        if not result.episode_pipeline_result.completed:
+            print(
+                "FOUT: episodische verwerking is niet voltooid."
+            )
+            return 1
+
+        status = engine.status()
+
+        if status["last_episode_decision"] == "none":
+            print(
+                "FOUT: episodebeslissing ontbreekt in status."
+            )
+            return 1
 
     print()
     print("Conversation Engine-test geslaagd.")
