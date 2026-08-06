@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-08-06T14:33:10.666591+00:00",
+  "updated_at": "2026-08-06T16:10:17.655120+00:00",
   "episodes": {
     "1019b0dc-9e16-4f21-bbad-d954e15e42f6": {
       "id": "1019b0dc-9e16-4f21-bbad-d954e15e42f6",
@@ -174,6 +174,31 @@
       "active": true,
       "created_at": "2026-08-06T14:33:10.666574+00:00",
       "updated_at": "2026-08-06T14:33:10.666587+00:00",
+      "last_accessed_at": "",
+      "access_count": 0
+    },
+    "59da86c2-0586-4544-b895-6d3e48c3535b": {
+      "id": "59da86c2-0586-4544-b895-6d3e48c3535b",
+      "user_message": "Hallo Bilge, werkt het nieuwe startcommando?",
+      "assistant_message": "Ja, het nieuwe startcommando werkt prima. Dank je wel voor de update.",
+      "summary": "Onderwerp: bilge development. Zeki: Hallo Bilge, werkt het nieuwe startcommando?. Bilge: Ja, het nieuwe startcommando werkt prima. Dank je wel voor de update.",
+      "topic": "bilge development",
+      "language": "nl",
+      "keywords": [
+        "startcommando",
+        "nieuwe",
+        "werkt",
+        "update",
+        "prima",
+        "hallo",
+        "bilge",
+        "dank"
+      ],
+      "importance": 3,
+      "source": "conversation_engine",
+      "active": true,
+      "created_at": "2026-08-06T16:10:17.655105+00:00",
+      "updated_at": "2026-08-06T16:10:17.655116+00:00",
       "last_accessed_at": "",
       "access_count": 0
     }

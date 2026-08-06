@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+
+BILGE_DIR="/root/Bilge/Runtime/python"
+
+if [ ! -d "$BILGE_DIR" ]; then
+    echo "[FOUT] De Bilge-map bestaat niet:"
+    echo "$BILGE_DIR"
+    exit 1
+fi
+
+cd "$BILGE_DIR" || exit 1
+
+exec python3 -m bilge.chat
