@@ -1,201 +1,129 @@
-#!/usr/bin/env python3
 """
-Bilge OS - Interactieve Chat
+Interactieve chatmodus voor Bilge.
 
-Start een lokale chatsessie met Bilge via de volledige pipeline.
+Starten:
+    python3 -m bilge.chat
 
-Commando's:
-- /help   Toon beschikbare commando's
-- /status Toon de huidige sessiestatus
-- /clear  Wis alleen Short Memory
-- /exit   Sluit Bilge af
-
-Deze versie:
-- gebruikt uitsluitend lokale Ollama;
-- gebruikt Short Memory binnen de actieve sessie;
-- schrijft nog niet automatisch naar Long Memory;
-- koppelt geen externe apps;
-- voert geen betalingen, e-mail- of agenda-acties uit.
+Afsluiten:
+    exit
+    quit
+    stop
+    afsluiten
 """
 
 from __future__ import annotations
 
-from bilge.conversation_engine import (
-    ConversationEngine,
-    ConversationEngineError,
-)
-from bilge.model_client import OllamaModelClient
+import sys
+from typing import Any
+
+from bilge.conversation_engine import ConversationEngine
 
 
-class BilgeChat:
-    """Eenvoudige interactieve terminalchat voor Bilge."""
+EXIT_COMMANDS = {
+    "exit",
+    "quit",
+    "stop",
+    "afsluiten",
+    "sluiten",
+    "çıkış",
+    "kapat",
+}
 
-    def __init__(self) -> None:
-        self.engine = ConversationEngine(
-            model_client=OllamaModelClient(
-                timeout_seconds=300,
-                temperature=0.5,
-                num_predict=700,
-            )
-        )
 
-    @staticmethod
-    def print_welcome() -> None:
-        print()
-        print("=" * 64)
-        print("BILGE")
-        print("=" * 64)
-        print()
-        print("Bilge wordt lokaal gestart.")
-        print("Typ /help voor de beschikbare commando's.")
-        print()
+def extract_answer(result: Any) -> str:
+    """
+    Haalt het uiteindelijke antwoord veilig uit ConversationResult.
 
-    @staticmethod
-    def print_help() -> None:
-        print()
-        print("Beschikbare commando's:")
-        print("  /help    Toon deze uitleg")
-        print("  /status  Toon de sessiestatus")
-        print("  /clear   Wis alleen het tijdelijke gesprekgeheugen")
-        print("  /exit    Sluit Bilge af")
-        print()
+    De huidige ConversationEngine gebruikt normaal result.answer.
+    De extra controles voorkomen een crash als de resultaatstructuur
+    later wordt uitgebreid of aangepast.
+    """
+    if result is None:
+        return ""
 
-    def print_status(self) -> None:
-        status = self.engine.status()
+    answer = getattr(result, "answer", None)
 
-        print()
-        print("Sessie-status:")
-        print(f"  Gestart              : {status['started']}")
-        print(f"  Boot succesvol       : {status['boot_successful']}")
-        print(
-            "  Short Memory-berichten: "
-            f"{status['short_memory_messages']}"
-        )
-        print(
-            "  Laatste beurt voltooid: "
-            f"{status['last_result_completed']}"
-        )
-        print(f"  Model                : {status['model']}")
-        print()
+    if isinstance(answer, str):
+        return answer.strip()
 
-    def handle_command(self, command: str) -> bool:
-        """
-        Verwerkt een chatcommando.
+    final_answer = getattr(result, "final_answer", None)
 
-        Geeft True terug wanneer de chat moet doorgaan.
-        """
-        normalized = command.lower().strip()
+    if isinstance(final_answer, str):
+        return final_answer.strip()
 
-        if normalized == "/help":
-            self.print_help()
-            return True
+    if isinstance(result, str):
+        return result.strip()
 
-        if normalized == "/status":
-            self.print_status()
-            return True
+    return str(result).strip()
 
-        if normalized == "/clear":
-            removed = self.engine.clear_session()
 
+def print_header() -> None:
+    """Toont de begroeting wanneer Bilge wordt gestart."""
+    print()
+    print("=" * 56)
+    print("                     BILGE")
+    print("=" * 56)
+    print("Je kunt nu normaal met Bilge praten.")
+    print("Typ 'exit' om de chat af te sluiten.")
+    print("=" * 56)
+    print()
+
+
+def run_chat() -> int:
+    """Start en beheert de interactieve chat."""
+    print_header()
+
+    try:
+        engine = ConversationEngine()
+    except Exception as exc:
+        print(f"[FOUT] Bilge kon niet worden gestart: {exc}")
+        return 1
+
+    while True:
+        try:
+            user_message = input("Jij: ").strip()
+        except (EOFError, KeyboardInterrupt):
             print()
-            print(
-                f"Short Memory geleegd. "
-                f"{removed} bericht(en) verwijderd."
-            )
-            print()
-            return True
+            print("Bilge: Tot de volgende keer, Zeki.")
+            return 0
 
-        if normalized in {"/exit", "/quit"}:
-            print()
-            print("Bilge wordt afgesloten. Tot snel, Zeki.")
-            print()
-            return False
+        if not user_message:
+            continue
 
-        print()
-        print(
-            "Onbekend commando. Typ /help voor de mogelijkheden."
-        )
-        print()
-        return True
-
-    def run(self) -> int:
-        """Start de interactieve chatsessie."""
-        self.print_welcome()
+        if user_message.casefold() in EXIT_COMMANDS:
+            print("Bilge: Tot de volgende keer, Zeki.")
+            return 0
 
         try:
-            self.engine.start()
-        except ConversationEngineError as exc:
-            print()
-            print(f"Bilge kon niet worden gestart: {exc}")
-            return 1
+            result = engine.process(user_message)
+            answer = extract_answer(result)
 
-        print()
-        print("Bilge is gereed. Je kunt nu met haar praten.")
-        print()
-
-        while True:
-            try:
-                user_message = input("Jij: ").strip()
-            except (EOFError, KeyboardInterrupt):
-                print()
-                print()
-                print("Bilge wordt afgesloten. Tot snel, Zeki.")
-                return 0
-
-            if not user_message:
-                continue
-
-            if user_message.startswith("/"):
-                if not self.handle_command(user_message):
-                    return 0
-
-                continue
+            if not answer:
+                answer = (
+                    "Ik kon nu geen bruikbaar antwoord maken. "
+                    "Probeer je vraag nog een keer."
+                )
 
             print()
-            print("Bilge denkt...")
-
-            try:
-                result = self.engine.process(user_message)
-            except ConversationEngineError as exc:
-                print()
-                print(f"Bilge-fout: {exc}")
-                print()
-                continue
-
+            print(f"Bilge: {answer}")
             print()
-            print(f"Bilge: {result.answer}")
+
+        except KeyboardInterrupt:
+            print()
+            print("Bilge: De huidige verwerking is gestopt.")
+            print()
+
+        except Exception as exc:
+            print()
+            print(f"[FOUT] Er ging iets mis tijdens het antwoorden: {exc}")
             print()
 
 
-def self_test() -> int:
-    """
-    Lichte test zonder interactieve invoer of modelgeneratie.
-
-    Controleert alleen of de chatklasse correct kan worden aangemaakt.
-    """
-    print("===== Bilge Chat-test =====")
-
-    chat = BilgeChat()
-
-    if chat.engine is None:
-        print("FOUT: Conversation Engine ontbreekt.")
-        return 1
-
-    status = chat.engine.status()
-
-    if status["started"]:
-        print("FOUT: de engine hoort vóór run() nog niet gestart te zijn.")
-        return 1
-
-    print("Chatklasse correct aangemaakt.")
-    print("Bilge Chat-test geslaagd.")
-    return 0
-
-
-def main() -> int:
-    """Applicatie-entrypoint."""
-    return BilgeChat().run()
+def main() -> None:
+    """Commando-ingang voor: python3 -m bilge.chat"""
+    exit_code = run_chat()
+    sys.exit(exit_code)
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    main()
