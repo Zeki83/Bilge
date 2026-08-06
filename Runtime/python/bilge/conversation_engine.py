@@ -617,6 +617,71 @@ class ConversationEngine:
 
         return ""
 
+    @staticmethod
+    def direct_long_memory_answer(
+        user_message: str,
+        language: str,
+        retrieval_result: LongMemoryRetrievalResult | None,
+    ) -> str:
+        """
+        Beantwoordt alleen directe vragen over een opgeslagen voorkeur.
+
+        Andere vragen blijven volledig via het taalmodel lopen.
+        """
+        if (
+            retrieval_result is None
+            or not retrieval_result.found
+            or not retrieval_result.memories
+        ):
+            return ""
+
+        message = " ".join(
+            user_message.casefold().strip().split()
+        )
+
+        direct_preference_question = any(
+            signal in message
+            for signal in (
+                "hoe wil ik dat je",
+                "hoe wil ik ",
+                "wat is mijn voorkeur",
+                "wat wil ik dat je",
+                "nasıl istiyorum",
+                "tercihim nedir",
+            )
+        )
+
+        if not direct_preference_question:
+            return ""
+
+        preference = next(
+            (
+                item
+                for item in retrieval_result.memories
+                if item.category == "preference"
+            ),
+            None,
+        )
+
+        if preference is None:
+            return ""
+
+        content = preference.content.strip()
+
+        if language == "tr":
+            if content.casefold().startswith("zeki wil "):
+                content = content[9:]
+
+            return f"Sen {content}"
+
+        if content.casefold().startswith("zeki wil "):
+            content = content[9:]
+
+        if not content:
+            return ""
+
+        return f"Je wilt {content}"
+
     @classmethod
     def build_final_answer(
         cls,
@@ -673,10 +738,21 @@ class ConversationEngine:
             )
         )
 
-        episode_retrieval_result = self.retrieve_episodes(
-            user_message=pipeline.context.user_message,
-            language=pipeline.context.language,
-        )
+        if (
+            long_memory_retrieval_result is not None
+            and long_memory_retrieval_result.found
+            and long_memory_retrieval_result.context_items
+        ):
+            episode_retrieval_result = None
+            print(
+                "[MEMORY PRIORITY] Relevante vaste herinnering "
+                "heeft voorrang; episodische context overgeslagen."
+            )
+        else:
+            episode_retrieval_result = self.retrieve_episodes(
+                user_message=pipeline.context.user_message,
+                language=pipeline.context.language,
+            )
 
         memory_items = self.selected_memory_items(
             pipeline
@@ -718,8 +794,26 @@ class ConversationEngine:
             pipeline.context.user_message,
         )
 
+        direct_memory_answer = self.direct_long_memory_answer(
+            user_message=pipeline.context.user_message,
+            language=pipeline.context.language,
+            retrieval_result=long_memory_retrieval_result,
+        )
+
+        answer_source = (
+            direct_memory_answer
+            if direct_memory_answer
+            else clean_result.cleaned
+        )
+
+        if direct_memory_answer:
+            print(
+                "[MEMORY ANSWER] Direct antwoord uit een "
+                "vaste voorkeur gebruikt."
+            )
+
         final_answer = self.build_final_answer(
-            clean_result.cleaned,
+            answer_source,
             pipeline.context.language,
             memory_result,
         )

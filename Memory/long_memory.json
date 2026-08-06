@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-08-05T20:43:18.509001+00:00",
+  "updated_at": "2026-08-06T09:34:05.833278+00:00",
   "records": {
     "ea281535-99f5-4897-8411-f5339dcee711": {
       "id": "ea281535-99f5-4897-8411-f5339dcee711",
@@ -11,6 +11,26 @@
       "active": true,
       "created_at": "2026-08-05T20:43:18.508948+00:00",
       "updated_at": "2026-08-05T20:43:18.508990+00:00"
+    },
+    "9eb3ad46-6da6-4391-b37c-b8098c282a0c": {
+      "id": "9eb3ad46-6da6-4391-b37c-b8098c282a0c",
+      "category": "fact",
+      "content": "ik complete bestanden wil ontvangen in plaats van losse regels",
+      "context": "Expliciet geheugenverzoek uit een gesprek met Zeki.",
+      "source": "user",
+      "active": true,
+      "created_at": "2026-08-06T09:09:47.078761+00:00",
+      "updated_at": "2026-08-06T09:09:47.078778+00:00"
+    },
+    "138876a3-4cf5-477c-95aa-7fb434a99c32": {
+      "id": "138876a3-4cf5-477c-95aa-7fb434a99c32",
+      "category": "preference",
+      "content": "Zeki wil complete bestanden ontvangen in plaats van losse regels.",
+      "context": "Vaste werkwijze bij het aanleveren van code.",
+      "source": "user",
+      "active": true,
+      "created_at": "2026-08-06T09:34:05.833257+00:00",
+      "updated_at": "2026-08-06T09:34:05.833275+00:00"
     }
   }
 }
