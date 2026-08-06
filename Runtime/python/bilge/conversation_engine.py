@@ -764,19 +764,43 @@ class ConversationEngine:
             episode_result=episode_retrieval_result,
         )
 
-        try:
-            prompt_package = self.prompt_builder.build(
-                boot_state=boot_state,
-                context=pipeline.context,
-                memory_decision=pipeline.memory_decision,
-                reasoning_plan=pipeline.reasoning_plan,
-                response_draft=pipeline.response_draft,
+        from bilge.fast_model_route import FastModelRoute
+        from bilge.route_selector import RouteSelector
+
+        route_decision = RouteSelector.select(
+            pipeline.context.user_message
+        )
+
+        if route_decision.use_fast_route:
+            print(
+                "[ROUTE] FAST — "
+                f"{route_decision.reason}"
+            )
+
+            prompt_package = FastModelRoute.build(
+                user_message=pipeline.context.user_message,
+                language=pipeline.context.language,
                 memory_items=memory_items,
             )
-        except PromptBuilderError as exc:
-            raise ConversationPipelineError(
-                f"Promptopbouw mislukt: {exc}"
-            ) from exc
+        else:
+            print(
+                "[ROUTE] FULL — "
+                f"{route_decision.reason}"
+            )
+
+            try:
+                prompt_package = self.prompt_builder.build(
+                    boot_state=boot_state,
+                    context=pipeline.context,
+                    memory_decision=pipeline.memory_decision,
+                    reasoning_plan=pipeline.reasoning_plan,
+                    response_draft=pipeline.response_draft,
+                    memory_items=memory_items,
+                )
+            except PromptBuilderError as exc:
+                raise ConversationPipelineError(
+                    f"Promptopbouw mislukt: {exc}"
+                ) from exc
 
         print("[CONVERSATION] Lokaal model aanroepen...")
 
