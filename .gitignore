@@ -10,3 +10,6 @@ venv/
 .idea/
 .vscode/
 .DS_Store
+
+# Tijdelijke Python-back-ups
+*.before_*
