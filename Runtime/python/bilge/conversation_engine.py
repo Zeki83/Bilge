@@ -49,6 +49,11 @@ from bilge.episode_retriever import (
     EpisodeRetriever,
     EpisodeRetrieverError,
 )
+from bilge.long_memory_retriever import (
+    LongMemoryRetrievalResult,
+    LongMemoryRetriever,
+    LongMemoryRetrieverError,
+)
 from bilge.memory_manager import MemoryDecision
 from bilge.memory_pipeline import (
     MemoryPipeline,
@@ -103,6 +108,7 @@ class ConversationResult:
     context: ContextState
     memory_decision: MemoryDecision
     memory_pipeline_result: MemoryPipelineResult
+    long_memory_retrieval_result: LongMemoryRetrievalResult | None
     episode_retrieval_result: EpisodeRetrievalResult | None
     episode_pipeline_result: EpisodePipelineResult | None
     reasoning_plan: ReasoningPlan
@@ -148,6 +154,22 @@ class ConversationResult:
     def answer_was_cleaned(self) -> bool:
         """Geeft terug of het modelantwoord is aangepast."""
         return self.clean_answer_result.changed
+
+    @property
+    def retrieved_long_memory_count(self) -> int:
+        """Geeft het aantal opgehaalde vaste herinneringen terug."""
+        if self.long_memory_retrieval_result is None:
+            return 0
+
+        return self.long_memory_retrieval_result.count
+
+    @property
+    def long_memory_context_found(self) -> bool:
+        """Geeft terug of relevante vaste herinneringen zijn gevonden."""
+        return bool(
+            self.long_memory_retrieval_result
+            and self.long_memory_retrieval_result.found
+        )
 
     @property
     def retrieved_episode_count(self) -> int:
@@ -202,6 +224,7 @@ class ConversationEngine:
         model_client: OllamaModelClient | None = None,
         short_memory: ShortMemory | None = None,
         memory_pipeline: MemoryPipeline | None = None,
+        long_memory_retriever: LongMemoryRetriever | None = None,
         episode_pipeline: EpisodePipeline | None = None,
         episode_retriever: EpisodeRetriever | None = None,
         answer_cleaner: AnswerCleaner | None = None,
@@ -217,6 +240,13 @@ class ConversationEngine:
 
         self.memory_pipeline = (
             memory_pipeline or MemoryPipeline()
+        )
+
+        self.long_memory_retriever = (
+            long_memory_retriever
+            or LongMemoryRetriever(
+                long_memory=self.memory_pipeline.long_memory
+            )
         )
 
         self.episode_pipeline = (
@@ -304,6 +334,45 @@ class ConversationEngine:
 
         return memory_items
 
+    def retrieve_long_memories(
+        self,
+        user_message: str,
+    ) -> LongMemoryRetrievalResult | None:
+        """
+        Haalt relevante vaste voorkeuren, doelen en werkwijzen op.
+
+        Een zoekfout mag het gewone gesprek nooit blokkeren.
+        """
+        try:
+            result = self.long_memory_retriever.retrieve(
+                user_message,
+                limit=4,
+            )
+        except LongMemoryRetrieverError as exc:
+            print(
+                "[LONG MEMORY] Vaste herinneringen konden niet "
+                f"worden opgehaald: {exc}"
+            )
+            return None
+
+        if not result.searched:
+            print(
+                "[LONG MEMORY] Geen zoekactie nodig voor "
+                "dit korte of triviale bericht."
+            )
+        elif result.found:
+            print(
+                "[LONG MEMORY] Relevante vaste herinneringen "
+                f"gevonden: {result.count}."
+            )
+        else:
+            print(
+                "[LONG MEMORY] Geen relevante vaste "
+                "herinneringen gevonden."
+            )
+
+        return result
+
     def retrieve_episodes(
         self,
         user_message: str,
@@ -347,40 +416,49 @@ class ConversationEngine:
         return result
 
     @staticmethod
-    def append_episode_context(
-        memory_items: list[str],
-        retrieval_result: EpisodeRetrievalResult | None,
+    def build_memory_context(
+        recent_items: list[str],
+        long_memory_result: LongMemoryRetrievalResult | None,
+        episode_result: EpisodeRetrievalResult | None,
     ) -> list[str]:
         """
-        Scheidt recente context van oudere gesprekservaringen.
+        Bouwt drie duidelijk gescheiden geheugensecties.
 
-        Zo weet het model welke informatie uit de actieve sessie komt
-        en welke informatie uit Episodic Memory is teruggehaald.
+        Volgorde:
+        1. recente gesprekscontext;
+        2. vaste voorkeuren, doelen en werkwijzen;
+        3. eerdere relevante ervaringen.
         """
         combined: list[str] = []
 
-        if memory_items:
+        if recent_items:
             combined.append(
                 "RECENTE GESPREKSCONTEXT"
             )
-            combined.extend(memory_items)
+            combined.extend(recent_items)
 
         if (
-            retrieval_result is not None
-            and retrieval_result.found
-            and retrieval_result.context_items
+            long_memory_result is not None
+            and long_memory_result.found
+            and long_memory_result.context_items
         ):
-            if combined:
-                combined.append(
-                    "EERDERE RELEVANTE ERVARINGEN"
-                )
-            else:
-                combined.append(
-                    "EERDERE RELEVANTE ERVARINGEN"
-                )
-
+            combined.append(
+                "VASTE VOORKEUREN, DOELEN EN WERKWIJZEN"
+            )
             combined.extend(
-                retrieval_result.context_items
+                long_memory_result.context_items
+            )
+
+        if (
+            episode_result is not None
+            and episode_result.found
+            and episode_result.context_items
+        ):
+            combined.append(
+                "EERDERE RELEVANTE ERVARINGEN"
+            )
+            combined.extend(
+                episode_result.context_items
             )
 
         return combined
@@ -589,6 +667,12 @@ class ConversationEngine:
             pipeline.context
         )
 
+        long_memory_retrieval_result = (
+            self.retrieve_long_memories(
+                user_message=pipeline.context.user_message,
+            )
+        )
+
         episode_retrieval_result = self.retrieve_episodes(
             user_message=pipeline.context.user_message,
             language=pipeline.context.language,
@@ -598,9 +682,10 @@ class ConversationEngine:
             pipeline
         )
 
-        memory_items = self.append_episode_context(
-            memory_items,
-            episode_retrieval_result,
+        memory_items = self.build_memory_context(
+            recent_items=memory_items,
+            long_memory_result=long_memory_retrieval_result,
+            episode_result=episode_retrieval_result,
         )
 
         try:
@@ -665,6 +750,9 @@ class ConversationEngine:
             context=pipeline.context,
             memory_decision=pipeline.memory_decision,
             memory_pipeline_result=memory_result,
+            long_memory_retrieval_result=(
+                long_memory_retrieval_result
+            ),
             episode_retrieval_result=episode_retrieval_result,
             episode_pipeline_result=episode_result,
             reasoning_plan=pipeline.reasoning_plan,
@@ -713,6 +801,22 @@ class ConversationEngine:
             "last_permanent_memory_stored": bool(
                 self.last_result
                 and self.last_result.permanent_memory_stored
+            ),
+            "last_long_memory_retrieval_completed": bool(
+                self.last_result
+                and self.last_result.long_memory_retrieval_result
+                and self.last_result
+                .long_memory_retrieval_result
+                .completed
+            ),
+            "last_long_memory_context_found": bool(
+                self.last_result
+                and self.last_result.long_memory_context_found
+            ),
+            "last_retrieved_long_memory_count": (
+                self.last_result.retrieved_long_memory_count
+                if self.last_result
+                else 0
             ),
             "last_episode_retrieval_completed": bool(
                 self.last_result
@@ -778,6 +882,14 @@ def print_result(result: ConversationResult) -> None:
         f"{result.permanent_memory_stored}"
     )
     print(
+        f"Vaste herinneringen  : "
+        f"{result.retrieved_long_memory_count}"
+    )
+    print(
+        f"Long Memory-context  : "
+        f"{result.long_memory_context_found}"
+    )
+    print(
         f"Episodes opgehaald   : "
         f"{result.retrieved_episode_count}"
     )
@@ -823,6 +935,7 @@ def self_test() -> int:
 
     from bilge.episode_selector import EpisodeSelector
     from bilge.episodic_memory import EpisodicMemory
+    from bilge.long_memory import LongMemory
 
     print("===== Conversation Engine-test =====")
 
@@ -830,6 +943,32 @@ def self_test() -> int:
         episode_storage = (
             Path(temporary_directory)
             / "episodic_memory_test.json"
+        )
+
+        long_memory_storage = (
+            Path(temporary_directory)
+            / "long_memory_test.json"
+        )
+
+        test_long_memory = LongMemory(
+            long_memory_storage
+        )
+
+        test_long_memory.add_memory(
+            "workflow",
+            (
+                "De Bilge-gespreksketen gebruikt relevante "
+                "vaste herinneringen bij het antwoorden."
+            ),
+            context="Test van Long Memory Retrieval.",
+        )
+
+        test_memory_pipeline = MemoryPipeline(
+            long_memory=test_long_memory
+        )
+
+        test_long_memory_retriever = LongMemoryRetriever(
+            long_memory=test_long_memory
         )
 
         test_episodic_memory = EpisodicMemory(
@@ -874,14 +1013,19 @@ def self_test() -> int:
                 temperature=0.3,
                 num_predict=120,
             ),
+            memory_pipeline=test_memory_pipeline,
+            long_memory_retriever=(
+                test_long_memory_retriever
+            ),
             episode_pipeline=test_episode_pipeline,
             episode_retriever=test_episode_retriever,
         )
 
         try:
             result = engine.process(
-                "Zeg in maximaal één korte zin dat de opgeschoonde "
-                "Bilge-gespreksketen werkt."
+                "Zeg in maximaal één korte zin dat de Bilge-"
+                "gespreksketen relevante vaste en episodische "
+                "herinneringen gebruikt."
             )
         except ConversationEngineError as exc:
             print()
@@ -907,6 +1051,32 @@ def self_test() -> int:
         if engine.short_memory.message_count() != 2:
             print(
                 "FOUT: Short Memory bevat niet twee berichten."
+            )
+            return 1
+
+        if result.long_memory_retrieval_result is None:
+            print(
+                "FOUT: Long Memory Retriever leverde "
+                "geen resultaat."
+            )
+            return 1
+
+        if not result.long_memory_retrieval_result.completed:
+            print(
+                "FOUT: Long Memory ophalen is niet voltooid."
+            )
+            return 1
+
+        if not result.long_memory_retrieval_result.found:
+            print(
+                "FOUT: voorbereide vaste herinnering "
+                "werd niet gevonden."
+            )
+            return 1
+
+        if result.retrieved_long_memory_count < 1:
+            print(
+                "FOUT: geen vaste geheugencontext beschikbaar."
             )
             return 1
 
@@ -947,6 +1117,22 @@ def self_test() -> int:
             return 1
 
         status = engine.status()
+
+        if not status[
+            "last_long_memory_retrieval_completed"
+        ]:
+            print(
+                "FOUT: Long Memory Retrieval ontbreekt "
+                "in status."
+            )
+            return 1
+
+        if status["last_retrieved_long_memory_count"] < 1:
+            print(
+                "FOUT: status bevat geen opgehaalde "
+                "vaste herinnering."
+            )
+            return 1
 
         if status["last_episode_decision"] == "none":
             print(
