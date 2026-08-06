@@ -29,6 +29,8 @@ Deze versie:
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from time import perf_counter
@@ -710,6 +712,8 @@ class ConversationEngine:
     def process(
         self,
         user_message: str,
+        *,
+        stream_callback: Callable[[str], None] | None = None,
     ) -> ConversationResult:
         """Voert één volledige end-to-end gespreksronde uit."""
         started_at = datetime.now(UTC)
@@ -804,10 +808,30 @@ class ConversationEngine:
 
         print("[CONVERSATION] Lokaal model aanroepen...")
 
+        direct_memory_preview = self.direct_long_memory_answer(
+            user_message=pipeline.context.user_message,
+            language=pipeline.context.language,
+            retrieval_result=long_memory_retrieval_result,
+        )
+
+        # Een rechtstreeks geheugenantwoord wordt later deterministisch
+        # gebruikt. In dat geval streamen we geen mogelijk afwijkend
+        # modelantwoord naar het scherm.
+        use_streaming = (
+            stream_callback is not None
+            and not direct_memory_preview
+        )
+
         try:
-            model_response = self.model_client.chat(
-                prompt_package
-            )
+            if use_streaming:
+                model_response = self.model_client.chat_stream(
+                    prompt_package,
+                    on_chunk=stream_callback,
+                )
+            else:
+                model_response = self.model_client.chat(
+                    prompt_package
+                )
         except ModelClientError as exc:
             raise ConversationPipelineError(
                 f"Modelaanroep mislukt: {exc}"

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import re
 import sys
 from typing import Any, Callable, TypeVar
 
@@ -143,9 +144,132 @@ def run_chat() -> int:
             continue
 
         try:
+            streamed_parts: list[str] = []
+            visible_parts: list[str] = []
+            stream_buffer = ""
+
+            cjk_pattern = re.compile(
+                r"[\u3400-\u4dbf\u4e00-\u9fff"
+                r"\u3040-\u30ff\uac00-\ud7af]"
+            )
+
+            forbidden_english_phrases = (
+                "thanks",
+                "thank you",
+                "you're welcome",
+                "how can i help",
+                "what can i do for you",
+            )
+
+            def normalize_for_comparison(value: str) -> str:
+                """
+                Normaliseert tekst voor vergelijking.
+
+                Verschillen in markdown, witruimte en regelafbrekingen
+                mogen niet leiden tot een dubbel definitief antwoord.
+                """
+                normalized = value.casefold()
+                normalized = re.sub(r"[*_`#>-]+", " ", normalized)
+                normalized = re.sub(r"\s+", " ", normalized)
+                return normalized.strip()
+
+            def is_safe_stream_text(value: str) -> bool:
+                """
+                Laat alleen bruikbare Nederlandse/Turkse modeltekst door.
+
+                Chinese, Japanse en Koreaanse tekens worden verborgen.
+                Bij een Nederlands antwoord worden ook bekende Engelse
+                stopzinnen niet direct getoond.
+                """
+                stripped = value.strip()
+
+                if not stripped:
+                    return False
+
+                if cjk_pattern.search(stripped) is not None:
+                    return False
+
+                lowered = stripped.casefold()
+
+                if any(
+                    phrase in lowered
+                    for phrase in forbidden_english_phrases
+                ):
+                    return False
+
+                return True
+
+            def emit_safe_text(value: str) -> None:
+                """Toont één gecontroleerd tekstdeel."""
+                if not is_safe_stream_text(value):
+                    return
+
+                normalized = value.strip()
+
+                if not normalized:
+                    return
+
+                current_visible = "".join(visible_parts)
+
+                # Voorkom dat Qwen een reeds gegeven stuk opnieuw begint.
+                if (
+                    normalized in current_visible
+                    or current_visible.endswith(normalized)
+                ):
+                    return
+
+                if not visible_parts:
+                    sys.__stdout__.write("\nBilge: ")
+                elif (
+                    not current_visible.endswith((" ", "\n"))
+                    and not normalized.startswith(
+                        (".", ",", "!", "?", ":", ";")
+                    )
+                ):
+                    sys.__stdout__.write(" ")
+
+                visible_parts.append(normalized)
+                sys.__stdout__.write(normalized)
+                sys.__stdout__.flush()
+
+            def show_chunk(chunk: str) -> None:
+                """
+                Buffert ruwe modeltokens en toont alleen complete,
+                gecontroleerde zinnen of regels.
+                """
+                nonlocal stream_buffer
+
+                if not isinstance(chunk, str) or not chunk:
+                    return
+
+                streamed_parts.append(chunk)
+                stream_buffer += chunk
+
+                while True:
+                    match = re.search(
+                        r"(?<=[.!?])(?:\s+|$)|\n+",
+                        stream_buffer,
+                    )
+
+                    if match is None:
+                        break
+
+                    end = match.end()
+                    candidate = stream_buffer[:end]
+                    stream_buffer = stream_buffer[end:]
+
+                    emit_safe_text(candidate)
+
+            callback = (
+                None
+                if debug_enabled
+                else show_chunk
+            )
+
             result = run_quietly(
                 engine.process,
                 user_message,
+                stream_callback=callback,
                 debug_enabled=debug_enabled,
             )
 
@@ -157,9 +281,45 @@ def run_chat() -> int:
                     "Probeer je vraag nog een keer."
                 )
 
-            print()
-            print(f"Bilge: {answer}")
-            print()
+            if stream_buffer.strip():
+                emit_safe_text(stream_buffer)
+
+            streamed_text = " ".join(
+                visible_parts
+            ).strip()
+
+            if visible_parts:
+                normalized_streamed = normalize_for_comparison(
+                    streamed_text
+                )
+                normalized_answer = normalize_for_comparison(
+                    answer
+                )
+
+                same_answer = (
+                    normalized_streamed == normalized_answer
+                    or normalized_answer.startswith(
+                        normalized_streamed
+                    )
+                    or normalized_streamed.startswith(
+                        normalized_answer
+                    )
+                )
+
+                if not same_answer:
+                    # Toon een vervanging alleen wanneer het opgeschoonde
+                    # antwoord inhoudelijk echt anders is.
+                    sys.__stdout__.write(
+                        "\n\nBilge (gecorrigeerd): "
+                        + answer
+                    )
+
+                sys.__stdout__.write("\n\n")
+                sys.__stdout__.flush()
+            else:
+                print()
+                print(f"Bilge: {answer}")
+                print()
 
         except KeyboardInterrupt:
             print()

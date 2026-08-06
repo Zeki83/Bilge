@@ -15,6 +15,8 @@ Deze module:
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import json
 import os
 import socket
@@ -295,6 +297,189 @@ class OllamaModelClient:
                 "num_predict": self.num_predict,
             },
         }
+
+    def chat_stream(
+        self,
+        package: PromptPackage,
+        *,
+        on_chunk: Callable[[str], None] | None = None,
+        verify_model: bool = True,
+    ) -> ModelResponse:
+        """
+        Stuurt een PromptPackage streamend naar Ollama.
+
+        Ieder ontvangen tekstfragment wordt direct doorgegeven aan
+        on_chunk. Aan het einde wordt daarnaast een volledig
+        ModelResponse teruggegeven, zodat de bestaande gesprekspipeline
+        normaal kan doorgaan.
+        """
+        self.validate_prompt_package(package)
+
+        if verify_model:
+            self.ensure_model_available()
+
+        payload = self.build_payload(package)
+        payload["stream"] = True
+
+        url = f"{self.base_url}/api/chat"
+
+        request_data = json.dumps(
+            payload,
+            ensure_ascii=False,
+        ).encode("utf-8")
+
+        request = urllib.request.Request(
+            url=url,
+            data=request_data,
+            headers={
+                "Accept": "application/x-ndjson",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+
+        content_parts: list[str] = []
+        final_data: dict[str, Any] = {}
+        completed = False
+
+        try:
+            with urllib.request.urlopen(
+                request,
+                timeout=self.timeout_seconds,
+            ) as response:
+                for raw_line in response:
+                    if not raw_line:
+                        continue
+
+                    try:
+                        line = raw_line.decode("utf-8").strip()
+                    except UnicodeDecodeError as exc:
+                        raise OllamaResponseError(
+                            "Ollama stuurde een ongeldig "
+                            "UTF-8-streamfragment."
+                        ) from exc
+
+                    if not line:
+                        continue
+
+                    try:
+                        data = json.loads(line)
+                    except json.JSONDecodeError as exc:
+                        raise OllamaResponseError(
+                            "Ollama stuurde een ongeldig "
+                            "JSON-streamfragment."
+                        ) from exc
+
+                    if not isinstance(data, dict):
+                        raise OllamaResponseError(
+                            "Ollama stuurde een onverwachte "
+                            "streamstructuur."
+                        )
+
+                    if data.get("error"):
+                        raise OllamaResponseError(
+                            str(data["error"])
+                        )
+
+                    message = data.get("message")
+
+                    if isinstance(message, dict):
+                        chunk = message.get("content", "")
+
+                        if isinstance(chunk, str) and chunk:
+                            content_parts.append(chunk)
+
+                            if on_chunk is not None:
+                                on_chunk(chunk)
+
+                    final_data = data
+
+                    if bool(data.get("done", False)):
+                        completed = True
+                        break
+
+        except urllib.error.HTTPError as exc:
+            try:
+                error_body = exc.read().decode("utf-8")
+                error_data = json.loads(error_body)
+                error_message = error_data.get(
+                    "error",
+                    error_body,
+                )
+            except (
+                UnicodeDecodeError,
+                json.JSONDecodeError,
+            ):
+                error_message = str(exc)
+
+            raise OllamaResponseError(
+                f"Ollama HTTP-fout {exc.code}: "
+                f"{error_message}"
+            ) from exc
+
+        except (
+            urllib.error.URLError,
+            TimeoutError,
+            socket.timeout,
+            ConnectionError,
+        ) as exc:
+            raise OllamaConnectionError(
+                f"Ollama is niet bereikbaar via "
+                f"{self.base_url}: {exc}"
+            ) from exc
+
+        content = "".join(content_parts).strip()
+
+        if not content:
+            raise OllamaResponseError(
+                "Ollama gaf geen bruikbare "
+                "streamende antwoordtekst terug."
+            )
+
+        if not completed:
+            raise OllamaResponseError(
+                "Ollama heeft het streamende antwoord "
+                "niet voltooid."
+            )
+
+        return ModelResponse(
+            content=content,
+            model=str(
+                final_data.get(
+                    "model",
+                    self.model,
+                )
+            ),
+            done=True,
+            done_reason=str(
+                final_data.get(
+                    "done_reason",
+                    "",
+                )
+            ),
+            prompt_tokens=int(
+                final_data.get(
+                    "prompt_eval_count",
+                    0,
+                )
+                or 0
+            ),
+            response_tokens=int(
+                final_data.get(
+                    "eval_count",
+                    0,
+                )
+                or 0
+            ),
+            total_duration_ns=int(
+                final_data.get(
+                    "total_duration",
+                    0,
+                )
+                or 0
+            ),
+            completed=True,
+        )
 
     def chat(
         self,
