@@ -351,19 +351,36 @@ class ConversationEngine:
         memory_items: list[str],
         retrieval_result: EpisodeRetrievalResult | None,
     ) -> list[str]:
-        """Voegt gecontroleerde episodische context toe."""
-        combined = list(memory_items)
+        """
+        Scheidt recente context van oudere gesprekservaringen.
+
+        Zo weet het model welke informatie uit de actieve sessie komt
+        en welke informatie uit Episodic Memory is teruggehaald.
+        """
+        combined: list[str] = []
+
+        if memory_items:
+            combined.append(
+                "RECENTE GESPREKSCONTEXT"
+            )
+            combined.extend(memory_items)
 
         if (
-            retrieval_result is None
-            or not retrieval_result.found
+            retrieval_result is not None
+            and retrieval_result.found
+            and retrieval_result.context_items
         ):
-            return combined
+            if combined:
+                combined.append(
+                    "EERDERE RELEVANTE ERVARINGEN"
+                )
+            else:
+                combined.append(
+                    "EERDERE RELEVANTE ERVARINGEN"
+                )
 
-        for item in retrieval_result.context_items:
-            combined.append(
-                "Eerdere relevante gesprekservaring: "
-                + item
+            combined.extend(
+                retrieval_result.context_items
             )
 
         return combined
