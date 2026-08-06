@@ -587,10 +587,14 @@ Geen metadata, geen analyse en geen uitleg over je antwoordproces.
             memory_items
         )
 
-        # Geheugencontext kan ook intern afkomstig zijn van de
-        # Episode Retriever. Die veilige zoeklaag werkt onafhankelijk
-        # van de geheugentypen die voor het actuele bericht zijn gekozen.
-        # De inhoud is hierboven al opgeschoond en begrensd.
+        if (
+            cleaned_memory
+            and not memory_decision.memory_types
+        ):
+            raise InvalidPromptInputError(
+                "Er is geheugeninhoud aangeleverd terwijl "
+                "geen geheugentype is geselecteerd."
+            )
 
         personality = self.build_personality_guidance(
             context

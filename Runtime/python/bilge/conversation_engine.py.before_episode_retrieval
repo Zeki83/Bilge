@@ -44,11 +44,6 @@ from bilge.episode_pipeline import (
     EpisodePipelineError,
     EpisodePipelineResult,
 )
-from bilge.episode_retriever import (
-    EpisodeRetrievalResult,
-    EpisodeRetriever,
-    EpisodeRetrieverError,
-)
 from bilge.memory_manager import MemoryDecision
 from bilge.memory_pipeline import (
     MemoryPipeline,
@@ -103,7 +98,6 @@ class ConversationResult:
     context: ContextState
     memory_decision: MemoryDecision
     memory_pipeline_result: MemoryPipelineResult
-    episode_retrieval_result: EpisodeRetrievalResult | None
     episode_pipeline_result: EpisodePipelineResult | None
     reasoning_plan: ReasoningPlan
     response_draft: ResponseDraft
@@ -150,22 +144,6 @@ class ConversationResult:
         return self.clean_answer_result.changed
 
     @property
-    def retrieved_episode_count(self) -> int:
-        """Geeft het aantal opgehaalde eerdere episodes terug."""
-        if self.episode_retrieval_result is None:
-            return 0
-
-        return self.episode_retrieval_result.count
-
-    @property
-    def episodic_context_found(self) -> bool:
-        """Geeft terug of relevante eerdere episodes zijn gevonden."""
-        return bool(
-            self.episode_retrieval_result
-            and self.episode_retrieval_result.found
-        )
-
-    @property
     def episode_stored(self) -> bool:
         """Geeft terug of deze gespreksronde episodisch is opgeslagen."""
         return bool(
@@ -203,7 +181,6 @@ class ConversationEngine:
         short_memory: ShortMemory | None = None,
         memory_pipeline: MemoryPipeline | None = None,
         episode_pipeline: EpisodePipeline | None = None,
-        episode_retriever: EpisodeRetriever | None = None,
         answer_cleaner: AnswerCleaner | None = None,
     ) -> None:
         self.boot_loader = boot_loader or BootLoader()
@@ -221,15 +198,6 @@ class ConversationEngine:
 
         self.episode_pipeline = (
             episode_pipeline or EpisodePipeline()
-        )
-
-        self.episode_retriever = (
-            episode_retriever
-            or EpisodeRetriever(
-                episodic_memory=(
-                    self.episode_pipeline.episodic_memory
-                )
-            )
         )
 
         self.answer_cleaner = (
@@ -303,70 +271,6 @@ class ConversationEngine:
             )
 
         return memory_items
-
-    def retrieve_episodes(
-        self,
-        user_message: str,
-        language: str,
-    ) -> EpisodeRetrievalResult | None:
-        """
-        Haalt relevante eerdere episodes op.
-
-        Een zoekfout mag het gewone gesprek nooit blokkeren.
-        """
-        try:
-            result = self.episode_retriever.retrieve(
-                user_message,
-                language=language,
-                limit=3,
-                register_access=True,
-            )
-        except EpisodeRetrieverError as exc:
-            print(
-                "[EPISODE] Eerdere episodes konden niet "
-                f"worden opgehaald: {exc}"
-            )
-            return None
-
-        if not result.searched:
-            print(
-                "[EPISODE] Geen zoekactie nodig voor "
-                "dit korte of triviale bericht."
-            )
-        elif result.found:
-            print(
-                "[EPISODE] Relevante eerdere episodes "
-                f"gevonden: {result.count}."
-            )
-        else:
-            print(
-                "[EPISODE] Geen relevante eerdere "
-                "episodes gevonden."
-            )
-
-        return result
-
-    @staticmethod
-    def append_episode_context(
-        memory_items: list[str],
-        retrieval_result: EpisodeRetrievalResult | None,
-    ) -> list[str]:
-        """Voegt gecontroleerde episodische context toe."""
-        combined = list(memory_items)
-
-        if (
-            retrieval_result is None
-            or not retrieval_result.found
-        ):
-            return combined
-
-        for item in retrieval_result.context_items:
-            combined.append(
-                "Eerdere relevante gesprekservaring: "
-                + item
-            )
-
-        return combined
 
     def store_short_memory(
         self,
@@ -572,18 +476,8 @@ class ConversationEngine:
             pipeline.context
         )
 
-        episode_retrieval_result = self.retrieve_episodes(
-            user_message=pipeline.context.user_message,
-            language=pipeline.context.language,
-        )
-
         memory_items = self.selected_memory_items(
             pipeline
-        )
-
-        memory_items = self.append_episode_context(
-            memory_items,
-            episode_retrieval_result,
         )
 
         try:
@@ -648,7 +542,6 @@ class ConversationEngine:
             context=pipeline.context,
             memory_decision=pipeline.memory_decision,
             memory_pipeline_result=memory_result,
-            episode_retrieval_result=episode_retrieval_result,
             episode_pipeline_result=episode_result,
             reasoning_plan=pipeline.reasoning_plan,
             response_draft=pipeline.response_draft,
@@ -696,22 +589,6 @@ class ConversationEngine:
             "last_permanent_memory_stored": bool(
                 self.last_result
                 and self.last_result.permanent_memory_stored
-            ),
-            "last_episode_retrieval_completed": bool(
-                self.last_result
-                and self.last_result.episode_retrieval_result
-                and self.last_result
-                .episode_retrieval_result
-                .completed
-            ),
-            "last_episodic_context_found": bool(
-                self.last_result
-                and self.last_result.episodic_context_found
-            ),
-            "last_retrieved_episode_count": (
-                self.last_result.retrieved_episode_count
-                if self.last_result
-                else 0
             ),
             "last_episode_decision": (
                 self.last_result.episode_decision
@@ -761,14 +638,6 @@ def print_result(result: ConversationResult) -> None:
         f"{result.permanent_memory_stored}"
     )
     print(
-        f"Episodes opgehaald   : "
-        f"{result.retrieved_episode_count}"
-    )
-    print(
-        f"Episodische context  : "
-        f"{result.episodic_context_found}"
-    )
-    print(
         f"Episodebeslissing    : "
         f"{result.episode_decision}"
     )
@@ -815,40 +684,11 @@ def self_test() -> int:
             / "episodic_memory_test.json"
         )
 
-        test_episodic_memory = EpisodicMemory(
-            episode_storage
-        )
-
-        test_episodic_memory.add_episode(
-            user_message=(
-                "De Bilge-gespreksketen gebruikt "
-                "episodische herinneringen."
-            ),
-            assistant_message=(
-                "Eerdere relevante gesprekken kunnen vóór "
-                "een nieuw antwoord worden opgehaald."
-            ),
-            summary=(
-                "De Bilge-gespreksketen kan relevante "
-                "episodische herinneringen ophalen."
-            ),
-            topic="bilge development",
-            language="nl",
-            keywords=[
-                "bilge",
-                "gespreksketen",
-                "episodische herinneringen",
-            ],
-            importance=5,
-        )
-
         test_episode_pipeline = EpisodePipeline(
             selector=EpisodeSelector(),
-            episodic_memory=test_episodic_memory,
-        )
-
-        test_episode_retriever = EpisodeRetriever(
-            episodic_memory=test_episodic_memory,
+            episodic_memory=EpisodicMemory(
+                episode_storage
+            ),
         )
 
         engine = ConversationEngine(
@@ -858,7 +698,6 @@ def self_test() -> int:
                 num_predict=120,
             ),
             episode_pipeline=test_episode_pipeline,
-            episode_retriever=test_episode_retriever,
         )
 
         try:
@@ -890,30 +729,6 @@ def self_test() -> int:
         if engine.short_memory.message_count() != 2:
             print(
                 "FOUT: Short Memory bevat niet twee berichten."
-            )
-            return 1
-
-        if result.episode_retrieval_result is None:
-            print(
-                "FOUT: Episode Retriever leverde geen resultaat."
-            )
-            return 1
-
-        if not result.episode_retrieval_result.completed:
-            print(
-                "FOUT: episodisch ophalen is niet voltooid."
-            )
-            return 1
-
-        if not result.episode_retrieval_result.found:
-            print(
-                "FOUT: voorbereide testepisode werd niet gevonden."
-            )
-            return 1
-
-        if result.retrieved_episode_count < 1:
-            print(
-                "FOUT: geen episodische context beschikbaar."
             )
             return 1
 
