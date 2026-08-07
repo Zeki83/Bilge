@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-08-06T20:55:15.224006+00:00",
+  "updated_at": "2026-08-07T16:47:48.009959+00:00",
   "episodes": {
     "1019b0dc-9e16-4f21-bbad-d954e15e42f6": {
       "id": "1019b0dc-9e16-4f21-bbad-d954e15e42f6",
@@ -224,6 +224,81 @@
       "active": true,
       "created_at": "2026-08-06T20:55:15.223991+00:00",
       "updated_at": "2026-08-06T20:55:15.224002+00:00",
+      "last_accessed_at": "",
+      "access_count": 0
+    },
+    "170158a4-2ade-41b0-b4f2-6d604a3930fa": {
+      "id": "170158a4-2ade-41b0-b4f2-6d604a3930fa",
+      "user_message": "Hallo Bilge, vertel in twee korte zinnen hoe het met je gaat.",
+      "assistant_message": "Hai Zeki, ik ga goed, bedankt! Hoe gaat het bij jou?",
+      "summary": "Onderwerp: bilge development. Zeki: Hallo Bilge, vertel in twee korte zinnen hoe het met je gaat. Bilge: Hai Zeki, ik ga goed, bedankt! Hoe gaat het bij jou?.",
+      "topic": "bilge development",
+      "language": "nl",
+      "keywords": [
+        "gaat",
+        "hoe",
+        "bedankt",
+        "zinnen",
+        "vertel",
+        "korte",
+        "hallo",
+        "bilge"
+      ],
+      "importance": 3,
+      "source": "conversation_engine",
+      "active": true,
+      "created_at": "2026-08-07T16:21:40.275236+00:00",
+      "updated_at": "2026-08-07T16:21:40.275248+00:00",
+      "last_accessed_at": "",
+      "access_count": 0
+    },
+    "fe3d53d0-fe61-4154-8a41-232a729721bf": {
+      "id": "fe3d53d0-fe61-4154-8a41-232a729721bf",
+      "user_message": "Hallo Bilge, hoe gaat het met je?",
+      "assistant_message": "Hallo Zeki! Het gaat prima, dankjewel. Hoe gaat het bij jou? Heb je iets nieuws?",
+      "summary": "Onderwerp: bilge development. Zeki: Hallo Bilge, hoe gaat het met je?. Bilge: Hallo Zeki! Het gaat prima, dankjewel. Hoe gaat het bij jou? Heb je iets nieuws?.",
+      "topic": "bilge development",
+      "language": "nl",
+      "keywords": [
+        "gaat",
+        "hallo",
+        "hoe",
+        "dankjewel",
+        "nieuws",
+        "prima",
+        "bilge",
+        "zeki"
+      ],
+      "importance": 3,
+      "source": "conversation_engine",
+      "active": true,
+      "created_at": "2026-08-07T16:29:39.514158+00:00",
+      "updated_at": "2026-08-07T16:29:39.514171+00:00",
+      "last_accessed_at": "",
+      "access_count": 0
+    },
+    "19c12a1f-4901-4020-b995-1180138aab47": {
+      "id": "19c12a1f-4901-4020-b995-1180138aab47",
+      "user_message": "Hallo Bilge, vertel in twee korte zinnen hoe het met je gaat.",
+      "assistant_message": "Hoi Zeki, ik ga goed, bedankt voor je vraag! Hoe gaat het bij jou?",
+      "summary": "Onderwerp: bilge development. Zeki: Hallo Bilge, vertel in twee korte zinnen hoe het met je gaat. Bilge: Hoi Zeki, ik ga goed, bedankt voor je vraag! Hoe gaat het bij jou?.",
+      "topic": "bilge development",
+      "language": "nl",
+      "keywords": [
+        "gaat",
+        "hoe",
+        "bedankt",
+        "zinnen",
+        "vertel",
+        "vraag",
+        "korte",
+        "hallo"
+      ],
+      "importance": 3,
+      "source": "conversation_engine",
+      "active": true,
+      "created_at": "2026-08-07T16:47:48.009907+00:00",
+      "updated_at": "2026-08-07T16:47:48.009955+00:00",
       "last_accessed_at": "",
       "access_count": 0
     }
